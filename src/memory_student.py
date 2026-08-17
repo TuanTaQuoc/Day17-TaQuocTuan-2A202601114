@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .config import settings
@@ -41,9 +42,41 @@ class StudentMemory:
             user_id=user_id,
             query=cap_query(query),
             scope="episodes",
-            limit=5,
+            limit=15,
         )
-        return render_graph_search(results, episode_char_cap=800)
+        return render_graph_search(results, episode_char_cap=180)
+
+    def _render_semantic_compact(self, results: Any) -> str:
+        """Render semantic graph hits without duplicate JSON/metadata noise."""
+        parts: list[str] = []
+        seen: set[str] = set()
+
+        for episode in getattr(results, "episodes", None) or []:
+            content = getattr(episode, "content", None)
+            if not content:
+                continue
+            text = str(content)
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                text = str(payload.get("summary") or payload)
+            key = " ".join(text.casefold().split())
+            if key and key not in seen:
+                seen.add(key)
+                parts.append(f"EPISODE: {text}")
+
+        for node in getattr(results, "nodes", None) or []:
+            name = getattr(node, "name", "")
+            summary = getattr(node, "summary", "")
+            text = f"{name} - {summary}".strip(" -")
+            key = " ".join(text.casefold().split())
+            if key and key not in seen:
+                seen.add(key)
+                parts.append(f"ENTITY: {text}")
+
+        return "\n".join(parts)
 
     def retrieve_semantic(self, graph_id: str, query: str) -> str:
         # LAB TODO 3/4
@@ -58,7 +91,7 @@ class StudentMemory:
             scope="episodes",
             limit=8,
         )
-        text = render_graph_search(results)
+        text = self._render_semantic_compact(results)
         if not text.strip():
             results = self.client.graph.search(
                 graph_id=graph_id,
@@ -66,7 +99,7 @@ class StudentMemory:
                 scope="nodes",
                 limit=8,
             )
-            text = render_graph_search(results)
+            text = self._render_semantic_compact(results)
         return text
 
     def assemble_context(self, layers: dict[str, str]) -> tuple[str, dict[str, dict[str, int]]]:
